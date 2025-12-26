@@ -1,0 +1,11 @@
+flask>=2.2
+flask-sock>=0.6
+simple-websocket>=1.0
+
+numpy
+scipy
+torch
+braindecode
+
+# Optional (for real Cyton/BrainFlow)
+brainflow
