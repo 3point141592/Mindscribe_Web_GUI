@@ -1,0 +1,50 @@
+{
+  "seed": 2,
+  "test_accuracy_best": 0.68,
+  "test_macro_f1_best": 0.6735423016361509,
+  "val_best_loss": 0.8503749966621399,
+  "n_train": 1875,
+  "n_val": 375,
+  "n_test": 375,
+  "train_sessions": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "val_sessions": [
+    5
+  ],
+  "test_sessions": [
+    6
+  ],
+  "class_names": [
+    "pain",
+    "yes",
+    "no",
+    "silence",
+    "hmmm"
+  ],
+  "channels_selected_indices": [
+    0,
+    1,
+    2
+  ],
+  "channels_selected_names": null,
+  "n_chans_kept": 3,
+  "channels_in_use_indices": [
+    0,
+    1,
+    2
+  ],
+  "channels_in_use_names": null,
+  "n_chans_total": 8,
+  "mask_applies_to_train": true,
+  "mask_applies_to_val": true,
+  "mask_applies_to_test": true,
+  "test_accuracy_swa": 0.6666666666666666,
+  "test_macro_f1_swa": 0.6636812606054894,
+  "test_accuracy": 0.6666666666666666,
+  "test_macro_f1": 0.6636812606054894
+}

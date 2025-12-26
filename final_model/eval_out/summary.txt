@@ -1,0 +1,11 @@
+Latency statistics (milliseconds)
+Samples: 3890 / total rows: 3890
+Mean        : 4.253
+Median      : 4.006
+Mode        : 3.993 (bin=1.000 ms)
+Q1 (25th)   : 3.529
+Q3 (75th)   : 4.523
+IQR         : 0.994
+Bottom 5%   : 3.000 (5th percentile)
+Top 5%      : 6.146 (95th percentile)
+Low-confidence top-1 (<70%): 3569 of 3890 (91.7%)

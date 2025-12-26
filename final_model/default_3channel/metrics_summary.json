@@ -1,0 +1,39 @@
+{
+  "seeds": [
+    1,
+    2,
+    3
+  ],
+  "mean_test_accuracy": 0.6595555555555555,
+  "std_test_accuracy": 0.022346320159958286,
+  "mean_test_macro_f1": 0.6565473079362876,
+  "std_test_macro_f1": 0.02415753382560778,
+  "best_seed_for_best": 3,
+  "best_seed_for_swa": 3,
+  "split": {
+    "train_sessions": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "val_sessions": [
+      5
+    ],
+    "test_sessions": [
+      6
+    ],
+    "channels_in_use_indices": [
+      0,
+      1,
+      2
+    ],
+    "channels_in_use_names": null,
+    "n_chans_total": 8,
+    "n_chans_in_use": 3,
+    "mask_applies_to_train": true,
+    "mask_applies_to_val": true,
+    "mask_applies_to_test": true
+  }
+}

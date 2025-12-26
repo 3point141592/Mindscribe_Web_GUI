@@ -1,0 +1,15 @@
+Test accuracy: 0.6080
+Macro-F1: 0.5975
+
+              precision    recall  f1-score   support
+
+        pain      0.724     0.840     0.778        75
+         yes      0.647     0.440     0.524        75
+          no      0.714     0.800     0.755        75
+     silence      0.742     0.307     0.434        75
+        hmmm      0.402     0.653     0.497        75
+
+    accuracy                          0.608       375
+   macro avg      0.646     0.608     0.598       375
+weighted avg      0.646     0.608     0.598       375
+
