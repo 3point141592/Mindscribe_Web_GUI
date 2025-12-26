@@ -1,0 +1,1350 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>MindScribe — Live (Web)</title>
+
+  <!-- Plotly for charts -->
+  <script defer src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.32.0/plotly.min.js"></script>
+
+  <!-- MediaPipe FaceMesh + Camera utils (optional; blink confirm) -->
+  <script defer src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+
+  <style>
+    :root {
+      --bg: #0b0f14;
+      --panel: #121923;
+      --panel2: #0f1620;
+      --text: #e8eef6;
+      --muted: #a9b6c7;
+      --border: rgba(255,255,255,0.10);
+      --accent: #6bb6ff;
+      --danger: #ff6b6b;
+      --ok: #5cffb0;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+    }
+
+    /* KEY CHANGE (widescreen): cap main column widths + center grid so plots don't balloon */
+    #app {
+      height: 100vh;
+      display: grid;
+      grid-template-columns: 320px minmax(560px, 920px) 520px; /* center has a max width now */
+      justify-content: center; /* leftover space becomes margins on ultrawide */
+      gap: 10px;
+      padding: 10px;
+    }
+
+    .panel {
+      background: linear-gradient(180deg, var(--panel), var(--panel2));
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      min-height: 0;
+    }
+    .panel header {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .panel header h2 {
+      font-size: 14px;
+      margin: 0;
+      letter-spacing: 0.3px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .panel .content {
+      padding: 12px;
+      overflow: auto;
+      min-height: 0;
+    }
+
+    /* Layout regions */
+    #sidebar { display: grid; grid-template-rows: auto 1fr; min-width: 0; }
+    /* More room for conversation: add an extra row; log is capped */
+    #center {
+      display: grid;
+      grid-template-rows: auto auto auto 1fr minmax(120px, 220px);
+      gap: 10px;
+      min-height: 0;
+      min-width: 0;
+    }
+    #right  { display: grid; grid-template-rows: auto 1fr; gap: 10px; min-height: 0; min-width: 0; }
+
+    /* Top row: dedicated Top Word + Status side by side */
+    #topRow {
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    /* Controls */
+    label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+    input, select, button, textarea {
+      width: 100%;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 10px;
+      font-size: 13px;
+      outline: none;
+      font-family: var(--sans);
+    }
+    textarea { font-family: var(--mono); resize: vertical; min-height: 120px; }
+    button { cursor: pointer; }
+    button.primary { border-color: rgba(107,182,255,0.55); }
+    button.danger  { border-color: rgba(255,107,107,0.55); }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+
+    .chip {
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .chip .dot {
+      width: 8px; height: 8px; border-radius: 999px; background: var(--muted);
+    }
+    .chip.ok .dot { background: var(--ok); }
+    .chip.bad .dot { background: var(--danger); }
+
+    /* Dedicated Top Word panel styling */
+    #topWordBox {
+      display: grid;
+      gap: 6px;
+    }
+    #topWordText {
+      font-size: 34px;
+      font-weight: 800;
+      letter-spacing: 0.8px;
+      line-height: 1.05;
+    }
+    #topWordPct {
+      font-size: 14px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    #topWordTs {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    /* Status */
+    #statusLine {
+      font-size: 16px;
+      font-weight: 700;
+      margin: 0;
+    }
+    #infoLine {
+      margin: 6px 0 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    /* Plots: cap width inside the center column so they don’t get giant on ultrawide */
+    .plotWrap {
+      max-width: 820px;
+      margin: 0 auto;
+    }
+    .plot { width: 100%; height: 100%; }
+    #probPlot { height: 260px; }
+    #livePlot { height: 340px; }
+    #lastPlot { height: calc(100% - 0px); }
+
+    /* Camera */
+    #cameraWrap { display: grid; gap: 8px; }
+    #video {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: #000;
+    }
+
+    #blinkBox {
+      padding: 10px;
+      border-radius: 12px;
+      border: 1px dashed rgba(255,255,255,0.20);
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.35;
+      white-space: pre-line;
+    }
+
+    progress {
+      width: 100%;
+      height: 12px;
+      border-radius: 999px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.04);
+    }
+    progress::-webkit-progress-bar { background: rgba(255,255,255,0.04); }
+    progress::-webkit-progress-value { background: rgba(107,182,255,0.8); }
+
+    .small {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 6px;
+    }
+    .hr { height: 1px; background: var(--border); margin: 12px 0; }
+    code { font-family: var(--mono); font-size: 12px; }
+
+    /* Conversation: chat bubbles (text-message style) */
+    #chat {
+      height: 100%;
+      min-height: 0;
+      display: grid;
+      grid-template-rows: 1fr auto;
+      gap: 10px;
+    }
+    #chatMessages {
+      min-height: 0;
+      overflow: auto;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: rgba(0,0,0,0.18);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .msg {
+      max-width: 85%;
+      padding: 10px 12px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      line-height: 1.35;
+      font-size: 13px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .msg.doctor {
+      align-self: flex-start;
+      background: rgba(107,182,255,0.12);
+    }
+    .msg.user {
+      align-self: flex-end;
+      background: rgba(92,255,176,0.12);
+    }
+    .msg.system {
+      align-self: center;
+      background: rgba(255,255,255,0.06);
+      color: var(--muted);
+      font-size: 12px;
+      max-width: 95%;
+      text-align: center;
+    }
+    .msg .meta {
+      margin-top: 6px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    /* Responsive fallback (narrow screens): stack columns */
+    @media (max-width: 1400px) {
+      #app {
+        grid-template-columns: 320px 1fr;
+        grid-template-rows: auto auto;
+      }
+      #right { grid-column: 1 / -1; }
+      #topRow { grid-template-columns: 1fr; }
+      .plotWrap { max-width: 100%; }
+    }
+  </style>
+</head>
+
+<body>
+  <div id="app">
+    <!-- Sidebar -->
+    <div id="sidebar" class="panel">
+      <header>
+        <h2>Settings</h2>
+        <span id="connChip" class="chip bad"><span class="dot"></span><span id="connText">Disconnected</span></span>
+      </header>
+      <div class="content">
+        <!-- Board switch -->
+        <div class="panel" style="margin-bottom:10px;">
+          <header><h2>Board</h2></header>
+          <div class="content">
+            <div class="row">
+              <button id="btnBoardCyton" class="primary">CYTON</button>
+              <button id="btnBoardSynth" class="primary">SYNTHETIC</button>
+            </div>
+            <div class="small">Sends: <code>switch_board</code></div>
+          </div>
+        </div>
+
+        <!-- Gate settings -->
+        <div class="panel" style="margin-bottom:10px;">
+          <header><h2>Gate Settings</h2></header>
+          <div class="content">
+            <label>Mode</label>
+            <div class="row">
+              <button id="btnModeUv">µV</button>
+              <button id="btnModeZ">z-score</button>
+            </div>
+
+            <div class="hr"></div>
+
+            <div class="row">
+              <div>
+                <label>µV thr</label>
+                <input id="uvThr" type="number" step="1" value="50" />
+              </div>
+              <div>
+                <label>|z| thr</label>
+                <input id="zThr" type="number" step="0.1" value="4.5" />
+              </div>
+            </div>
+
+            <div class="row3" style="margin-top:8px;">
+              <div>
+                <label>Min active</label>
+                <input id="minActive" type="number" step="1" value="2" />
+              </div>
+              <div>
+                <label>Consec</label>
+                <input id="consec" type="number" step="1" value="1" />
+              </div>
+              <div>
+                <label>Cooldown (samples)</label>
+                <input id="cooldown" type="number" step="50" value="2500" />
+              </div>
+            </div>
+
+            <div style="margin-top:10px;">
+              <button id="btnApplyGate" class="primary">Apply Gate</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Live plot controls -->
+        <div class="panel" style="margin-bottom:10px;">
+          <header><h2>Live Plot</h2></header>
+          <div class="content">
+            <div class="row">
+              <div>
+                <label>Window (sec)</label>
+                <input id="liveSec" type="number" step="0.5" value="5" />
+              </div>
+              <div>
+                <label>&nbsp;</label>
+                <button id="btnRebuildLive" class="primary">Rebuild buffer</button>
+              </div>
+            </div>
+            <div class="row" style="margin-top:8px;">
+              <button id="btnPauseLive">Pause plot</button>
+              <button id="btnAutoscaleLive">Autoscale Y</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Speech/TTS -->
+        <div class="panel" style="margin-bottom:10px;">
+          <header><h2>Speech (TTS)</h2></header>
+          <div class="content">
+            <label>
+              <input id="ttsEnabled" type="checkbox" checked style="width:auto; margin-right:8px; vertical-align:middle;">
+              Speak questions aloud (browser)
+            </label>
+            <div class="small">Uses the browser’s Web Speech API (client-side).</div>
+          </div>
+        </div>
+
+        <!-- Blink confirmation -->
+        <div class="panel" style="margin-bottom:10px;">
+          <header><h2>Blink Confirmation</h2></header>
+          <div class="content">
+            <div id="blinkBox">Blink confirm: idle</div>
+            <div style="margin-top:8px;">
+              <button id="btnManualConfirm">Manual confirm (fallback)</button>
+            </div>
+            <div class="small">
+              Backend still enforces the 2-second confirm window; this sends <code>blink_confirm</code>.
+            </div>
+          </div>
+        </div>
+
+        <div class="hr"></div>
+
+        <button id="btnQuit" class="danger">Quit (send to backend)</button>
+      </div>
+    </div>
+
+    <!-- Center -->
+    <div id="center">
+      <!-- Top row: Top Word + Status -->
+      <div id="topRow">
+        <div class="panel">
+          <header><h2>Top word</h2></header>
+          <div class="content" id="topWordBox">
+            <div id="topWordText">—</div>
+            <div id="topWordPct">—</div>
+            <div id="topWordTs">—</div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <header><h2>Status</h2></header>
+          <div class="content">
+            <p id="statusLine">Waiting for first inference…</p>
+            <p id="infoLine">—</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <header><h2>Last inference — class probabilities</h2></header>
+        <div class="content">
+          <div class="plotWrap">
+            <div id="probPlot" class="plot"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <header style="gap:12px;">
+          <h2>Live signal (gate channels) — stacked</h2>
+          <span class="chip"><span class="dot"></span><span id="liveMeta">—</span></span>
+        </header>
+        <div class="content">
+          <div class="plotWrap">
+            <div id="livePlot" class="plot"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Conversation moved here (bigger) -->
+      <div class="panel">
+        <header><h2>Conversation (EMG)</h2></header>
+        <div class="content" id="chat">
+          <div id="chatMessages" aria-label="Conversation messages">
+            <div id="chatPlaceholder" class="msg system">Waiting for EMG conversation…
+No messages received yet.</div>
+          </div>
+          <div>
+            <progress id="captureProg" max="2000" value="0"></progress>
+            <div id="listenText" class="small"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" style="min-height:0;">
+        <header><h2>Log</h2></header>
+        <div class="content" style="min-height:0;">
+          <textarea id="log" readonly></textarea>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right -->
+    <div id="right">
+      <div class="panel">
+        <header><h2>Camera (live)</h2></header>
+        <div class="content" id="cameraWrap">
+          <video id="video" playsinline muted></video>
+          <div class="small">
+            Camera runs in the browser (client-side). For remote/server camera streaming you’d use WebRTC or a relay.
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <header style="gap:12px;">
+          <h2>Last inference window (model channels)</h2>
+          <div class="row" style="max-width:260px;">
+            <button id="btnAutoscaleLast">Autoscale Y</button>
+          </div>
+        </header>
+        <div class="content">
+          <div id="lastPlot" class="plot"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    /**********************************************************************
+     * MindScribe Web UI
+     * - Connects to Flask-Sock WebSocket at /ws
+     * - Message schema mirrors your Tkinter queue messages.
+     **********************************************************************/
+
+    // -----------------------------
+    // Helpers
+    // -----------------------------
+    const $ = (id) => document.getElementById(id);
+
+    const logEl = $("log");
+    function logln(s) {
+      const ts = new Date().toLocaleTimeString();
+      logEl.value += `[${ts}] ${s}\\n`;
+      logEl.scrollTop = logEl.scrollHeight;
+      const lines = logEl.value.split("\\n");
+      if (lines.length > 600) logEl.value = lines.slice(lines.length - 600).join("\\n");
+    }
+
+    
+    function wsCandidates() {
+      // Prefer same-origin when served by Flask.
+      if (location.origin && location.origin !== "null") {
+        const same = location.origin.replace(/^http/, "ws") + "/ws";
+        return [same];
+      }
+      // If the HTML is opened as file://, origin is "null".
+      // Try common dev ports.
+      return [
+        "ws://localhost:8000/ws",
+        "ws://127.0.0.1:8000/ws",
+        "ws://localhost:5000/ws",
+        "ws://127.0.0.1:5000/ws"
+      ];
+    }
+
+    // -----------------------------
+    // WebSocket
+    // -----------------------------
+    let ws = null;
+    let wsAttempt = 0;
+    let wsUrlIndex = 0;
+    let wsUrls = [];
+
+    function setConn(ok, text) {
+      const chip = $("connChip");
+      const ctext = $("connText");
+      ctext.textContent = text;
+      chip.classList.toggle("ok", ok);
+      chip.classList.toggle("bad", !ok);
+    }
+
+    function send(obj) {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        logln("WS not connected; cannot send: " + JSON.stringify(obj));
+        return;
+      }
+      ws.send(JSON.stringify(obj));
+    }
+
+    function connect() {
+      wsUrls = wsCandidates();
+      wsAttempt = 0;
+      wsUrlIndex = 0;
+      connectNextUrl();
+    }
+
+    function connectNextUrl() {
+      const url = wsUrls[wsUrlIndex % wsUrls.length];
+      wsAttempt += 1;
+      logln(`WS connect attempt #${wsAttempt} → ${url}`);
+      setConn(false, "Connecting…");
+
+      try { ws && ws.close(); } catch {}
+      ws = new WebSocket(url);
+
+      ws.onopen = () => {
+        setConn(true, "Connected");
+        logln("WS connected");
+        ws.send(JSON.stringify({ type: "gui_ready" }));
+      };
+
+      ws.onclose = (ev) => {
+        const code = ev.code ?? 0;
+        const reason = ev.reason ?? "";
+        setConn(false, "Disconnected");
+        logln(`WS closed (code=${code}) ${reason}`);
+        wsUrlIndex += 1;
+        setTimeout(connectNextUrl, 900);
+      };
+
+      ws.onerror = () => {
+        setConn(false, "WS error");
+        logln("WS error (handshake failed or connection refused).");
+      };
+
+      ws.onmessage = (ev) => {
+        let msg = null;
+        try { msg = JSON.parse(ev.data); }
+        catch { return; }
+        handleMsg(msg);
+      };
+    }
+
+
+    // -----------------------------
+    // Plot state
+    // -----------------------------
+    let classNames = [];
+    let probReady = false;
+
+    let fs = 250.0;
+    let liveWindowSec = 5.0;
+    let livePaused = false;
+
+    // Live ring buffer
+    let liveNch = 0;
+    let liveLen = 0;
+    let liveRing = null; // {data: Float32Array[], wptr, filled}
+
+    function rebuildLiveRing(nCh, fsIn, sec) {
+      fs = Number(fsIn) || fs;
+      liveWindowSec = Math.max(0.5, Number(sec) || liveWindowSec);
+      liveNch = Number(nCh) || liveNch;
+      liveLen = Math.max(1, Math.round(liveWindowSec * fs));
+      liveRing = {
+        data: Array.from({length: liveNch}, () => new Float32Array(liveLen)),
+        wptr: 0,
+        filled: 0
+      };
+      $("liveMeta").textContent = `${liveNch} ch @ ${fs.toFixed(1)} Hz | buffer=${liveLen} (~${(liveLen/fs).toFixed(2)}s)`;
+      initLivePlot();
+      logln(`[Live] ring rebuilt: ${liveNch} ch, len=${liveLen}, fs=${fs.toFixed(2)}`);
+    }
+
+    function ringAppend(chunk) {
+      if (!liveRing || !chunk || chunk.length === 0) return;
+      const C = chunk.length;
+      const N = (chunk[0] || []).length;
+      if (N <= 0) return;
+
+      if (C !== liveNch) rebuildLiveRing(C, fs, liveWindowSec);
+
+      if (N >= liveLen) {
+        for (let c=0; c<liveNch; c++) {
+          const src = Float32Array.from(chunk[c].slice(N - liveLen));
+          liveRing.data[c].set(src);
+        }
+        liveRing.wptr = 0;
+        liveRing.filled = liveLen;
+        return;
+      }
+
+      const end = liveRing.wptr + N;
+      if (end <= liveLen) {
+        for (let c=0; c<liveNch; c++) {
+          liveRing.data[c].set(Float32Array.from(chunk[c]), liveRing.wptr);
+        }
+      } else {
+        const part = liveLen - liveRing.wptr;
+        for (let c=0; c<liveNch; c++) {
+          const src = Float32Array.from(chunk[c]);
+          liveRing.data[c].set(src.subarray(0, part), liveRing.wptr);
+          liveRing.data[c].set(src.subarray(part), 0);
+        }
+      }
+      liveRing.wptr = (liveRing.wptr + N) % liveLen;
+      liveRing.filled = Math.min(liveLen, liveRing.filled + N);
+    }
+
+    function ringOrdered(ch) {
+      if (!liveRing) return new Float32Array(0);
+      const arr = liveRing.data[ch];
+      const filled = liveRing.filled;
+      if (filled <= 0) return new Float32Array(0);
+
+      if (filled < liveLen) return arr.subarray(0, filled);
+
+      const out = new Float32Array(liveLen);
+      const a = arr.subarray(liveRing.wptr);
+      const b = arr.subarray(0, liveRing.wptr);
+      out.set(a, 0);
+      out.set(b, a.length);
+      return out;
+    }
+
+    // -----------------------------
+    // Plotly setup/update
+    // -----------------------------
+    const plotFont = { color: "#e8eef6", size: 11 };
+
+    function initProbPlot(names) {
+      const x = names.map(s => String(s).toUpperCase());
+      const y = names.map(() => 0.0);
+
+      Plotly.newPlot("probPlot", [{
+        type: "bar",
+        x, y
+      }], {
+        margin: {l: 52, r: 18, t: 10, b: 70},
+        yaxis: {range: [0, 1], title: "Probability"},
+        paper_bgcolor: "rgba(0,0,0,0)",
+        plot_bgcolor: "rgba(0,0,0,0)",
+        font: plotFont,
+      }, {displayModeBar: false, responsive: true});
+      probReady = true;
+    }
+
+    function updateProb(names, probs) {
+      if (!probReady || names.join("|") !== classNames.join("|")) {
+        classNames = names.slice();
+        initProbPlot(classNames);
+      }
+      const x = classNames.map(s => String(s).toUpperCase());
+      const y = probs.slice();
+      Plotly.react("probPlot", [{
+        type: "bar",
+        x, y
+      }], {
+        margin: {l: 52, r: 18, t: 10, b: 70},
+        yaxis: {range: [0, Math.min(1, Math.max(0.1, Math.max(...y)*1.1))], title: "Probability"},
+        paper_bgcolor: "rgba(0,0,0,0)",
+        plot_bgcolor: "rgba(0,0,0,0)",
+        font: plotFont,
+      }, {displayModeBar: false, responsive: true});
+    }
+
+    function initLivePlot() {
+      const traces = [];
+      for (let c=0; c<liveNch; c++) {
+        traces.push({
+          type: "scatter",
+          mode: "lines",
+          name: `CH${c+1}`,
+          x: [],
+          y: [],
+          line: {width: 1}
+        });
+      }
+      Plotly.newPlot("livePlot", traces, {
+        margin: {l: 60, r: 18, t: 10, b: 40},
+        xaxis: {title: "Time (s)", range: [-liveWindowSec, 0]},
+        yaxis: {title: "Amplitude (stacked)", autorange: true},
+        showlegend: liveNch <= 12,
+        paper_bgcolor: "rgba(0,0,0,0)",
+        plot_bgcolor: "rgba(0,0,0,0)",
+        font: plotFont,
+      }, {displayModeBar: false, responsive: true});
+    }
+
+    let liveRedrawScheduled = false;
+    function scheduleLiveRedraw() {
+      if (liveRedrawScheduled) return;
+      liveRedrawScheduled = true;
+      requestAnimationFrame(() => {
+        liveRedrawScheduled = false;
+        redrawLivePlot();
+      });
+    }
+
+    function stdNoMean(x) {
+      const n = x.length;
+      if (n <= 1) return 1.0;
+      let mean = 0;
+      for (let i=0;i<n;i++) mean += x[i];
+      mean /= n;
+      let v = 0;
+      for (let i=0;i<n;i++) {
+        const d = x[i] - mean;
+        v += d*d;
+      }
+      const s = Math.sqrt(v / n);
+      return (s > 1e-6) ? s : 1.0;
+    }
+
+    function redrawLivePlot() {
+      if (livePaused || !liveRing) return;
+      const Tcur = liveRing.filled;
+      if (Tcur <= 0) return;
+
+      const x = new Array(Tcur);
+      for (let i=0;i<Tcur;i++) x[i] = (i - (Tcur-1)) / fs;
+
+      const traces = [];
+      for (let c=0; c<liveNch; c++) {
+        const v = ringOrdered(c);
+        const sd = stdNoMean(v);
+        const y = new Array(v.length);
+        const offset = c * 3.0;
+        for (let i=0;i<v.length;i++) y[i] = (v[i] / sd) + offset;
+
+        traces.push({
+          type: "scatter",
+          mode: "lines",
+          name: `CH${c+1}`,
+          x,
+          y,
+          line: {width: 1}
+        });
+      }
+
+      Plotly.react("livePlot", traces, {
+        margin: {l: 60, r: 18, t: 10, b: 40},
+        xaxis: {title: "Time (s)", range: [-Math.min(liveWindowSec, (Tcur-1)/fs), 0]},
+        yaxis: {title: "Amplitude (stacked)", autorange: true},
+        showlegend: liveNch <= 12,
+        paper_bgcolor: "rgba(0,0,0,0)",
+        plot_bgcolor: "rgba(0,0,0,0)",
+        font: plotFont,
+      }, {displayModeBar: false, responsive: true});
+    }
+
+    function updateLastWindow(chunkCxT, fsWin, trigIdx, labels) {
+      const C = chunkCxT.length;
+      const T = (chunkCxT[0] || []).length;
+      if (C === 0 || T === 0) return;
+
+      const f = Number(fsWin) || fs;
+      const t = new Array(T);
+      for (let i=0;i<T;i++) t[i] = (i - Number(trigIdx || 0)) / f;
+
+      const traces = [];
+      for (let c=0;c<C;c++) {
+        const v = Float32Array.from(chunkCxT[c]);
+        const sd = stdNoMean(v);
+        const y = new Array(T);
+        const offset = c * 3.0;
+        for (let i=0;i<T;i++) y[i] = (v[i] / sd) + offset;
+
+        traces.push({
+          type: "scatter",
+          mode: "lines",
+          name: labels && labels[c] ? labels[c] : `CH${c+1}`,
+          x: t,
+          y,
+          line: {width: 1}
+        });
+      }
+
+      const yMin = -2;
+      const yMax = C*3 + 2;
+      traces.push({
+        type: "scatter",
+        mode: "lines",
+        name: "t=0",
+        x: [0,0],
+        y: [yMin, yMax],
+        line: {width: 2, dash: "dash"},
+        hoverinfo: "skip",
+        showlegend: false
+      });
+
+      Plotly.react("lastPlot", traces, {
+        margin: {l: 60, r: 18, t: 10, b: 40},
+        xaxis: {title: "Time (s)"},
+        yaxis: {title: "Amplitude (stacked)", autorange: true},
+        showlegend: C <= 12,
+        paper_bgcolor: "rgba(0,0,0,0)",
+        plot_bgcolor: "rgba(0,0,0,0)",
+        font: plotFont,
+      }, {displayModeBar: false, responsive: true});
+    }
+
+    // -----------------------------
+    // TTS (browser)
+    // -----------------------------
+    function speak(text) {
+      if (!$("ttsEnabled").checked) return;
+      if (!("speechSynthesis" in window)) return;
+      try {
+        window.speechSynthesis.cancel();
+        const utt = new SpeechSynthesisUtterance(text);
+        utt.rate = 1.0;
+        utt.volume = 1.0;
+        window.speechSynthesis.speak(utt);
+      } catch {}
+    }
+
+    // -----------------------------
+    // Conversation (text-message style)
+    // -----------------------------
+    const VOICE_CAPTURE_SEC = 2.0;     // match CONFIG.VOICE_CAPTURE_SEC
+    const VOICE_CAPTURE_MS = Math.round(VOICE_CAPTURE_SEC * 1000);
+
+    let convoSpec = null;
+    let qMap = {};
+    let currentQid = null;
+    let answers = {};
+    let captureTimer = null;
+
+    const chatEl = $("chatMessages");
+
+    function scrollChatToBottom() {
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    function hideChatPlaceholder() {
+      const ph = document.getElementById("chatPlaceholder");
+      if (ph) ph.style.display = "none";
+    }
+
+    function addMsg(role, text, meta=null) {
+      hideChatPlaceholder();
+      const m = document.createElement("div");
+      m.className = `msg ${role}`;
+      m.textContent = text;
+
+      if (meta) {
+        const metaEl = document.createElement("div");
+        metaEl.className = "meta";
+        metaEl.textContent = meta;
+        m.appendChild(metaEl);
+      }
+      chatEl.appendChild(m);
+      scrollChatToBottom();
+    }
+
+    // Rules mirror the original Tkinter conversation panel
+    const REDUNDANCY_RULES = [
+      { qid: "q_alert", next_is: null, answers: new Set(["pain","yes"]), force_next: null },
+      { qid: "q_fever", next_is: "q_pain_relief", if_answers: { q_pain_now: new Set(["no","hmmm"]) }, force_next: "q_rest" },
+      {
+        qid: "q_rest", next_is: "q_alert",
+        if_answers_all: {
+          q_pain_now: new Set(["no","hmmm"]),
+          q_breathing: new Set(["no","hmmm"]),
+          q_dizzy: new Set(["no","hmmm"]),
+          q_fever: new Set(["no","hmmm"])
+        },
+        force_next: "q_followup"
+      }
+    ];
+
+    function followupFor(q, val) {
+      const f = (q && q.followups) ? q.followups : {};
+      const key = String(val || "").toLowerCase();
+      return (f[key] ?? f["_any"] ?? (Object.values(f)[0] ?? null));
+    }
+
+    function applyRedundancyRules(qid, val, nxt) {
+      const v = String(val || "").toLowerCase();
+      for (const rule of REDUNDANCY_RULES) {
+        if (qid !== rule.qid) continue;
+        if ("next_is" in rule && rule.next_is !== null && nxt !== rule.next_is) continue;
+        if (rule.answers && !rule.answers.has(v)) continue;
+
+        let ok = true;
+        if (rule.if_answers) {
+          for (const [rqid, allowed] of Object.entries(rule.if_answers)) {
+            if (!allowed.has(answers[rqid])) { ok = false; break; }
+          }
+        }
+        if (ok && rule.if_answers_all) {
+          for (const [rqid, allowed] of Object.entries(rule.if_answers_all)) {
+            if (!allowed.has(answers[rqid])) { ok = false; break; }
+          }
+        }
+        if (!ok) continue;
+        return rule.force_next;
+      }
+      return nxt;
+    }
+
+    function startCaptureFor(qid) {
+      if (captureTimer) { clearInterval(captureTimer); captureTimer = null; }
+
+      const listenText = $("listenText");
+      const prog = $("captureProg");
+
+      if (!qid) {
+        listenText.textContent = "";
+        prog.value = 0;
+        addMsg("doctor", "All set. Thank you.");
+        speak("All set. Thank you.");
+        return;
+      }
+
+      const q = qMap[qid];
+      if (!q) {
+        listenText.textContent = "";
+        prog.value = 0;
+        addMsg("doctor", "All set. Thank you.");
+        speak("All set. Thank you.");
+        return;
+      }
+
+      currentQid = qid;
+
+      // Add doctor bubble (question)
+      const question = q.text || qid;
+      addMsg("doctor", question);
+      speak(question);
+
+      listenText.textContent = `Listening ${VOICE_CAPTURE_SEC.toFixed(1)}s (EMG)…`;
+      prog.max = VOICE_CAPTURE_MS;
+      prog.value = 0;
+
+      // Notify backend to start capture
+      const meta = {
+        type: "start_voice_capture",
+        qid,
+        qtype: q.type || "choice",
+      };
+      if (meta.qtype === "choice" || meta.qtype === "multi") meta.options = q.options || [];
+      if (meta.qtype === "scale") {
+        meta.min = Number(q.min ?? 0);
+        meta.max = Number(q.max ?? 10);
+        meta.step = Number(q.step ?? 1);
+      }
+      if (meta.qtype === "text") meta.placeholder = q.placeholder || "";
+      send(meta);
+
+      // Progress
+      const t0 = performance.now();
+      captureTimer = setInterval(() => {
+        const elapsed = performance.now() - t0;
+        prog.value = Math.min(prog.max, Math.max(0, elapsed));
+        if (elapsed >= prog.max) {
+          clearInterval(captureTimer);
+          captureTimer = null;
+        }
+      }, 50);
+    }
+
+    function setConvoSpec(spec) {
+      convoSpec = spec || { start: null, questions: {} };
+      qMap = convoSpec.questions || {};
+      answers = {};
+      currentQid = convoSpec.start || null;
+
+      hideChatPlaceholder();
+      addMsg("system", "Conversation ready.");
+
+      startCaptureFor(currentQid);
+    }
+
+    // -----------------------------
+    // Blink confirmation
+    // -----------------------------
+    let confirmModeActive = false;
+    let blinkDebounceUntil = 0;
+
+    function setBlinkBox(text) { $("blinkBox").textContent = text; }
+
+    function triggerBlinkConfirm() {
+      const now = performance.now();
+      if (now < blinkDebounceUntil) return;
+      blinkDebounceUntil = now + 300;
+      send({type: "blink_confirm"});
+    }
+
+    async function initCameraAndBlink() {
+      const video = $("video");
+
+      if (!navigator.mediaDevices?.getUserMedia) {
+        logln("Camera not supported in this browser.");
+        return;
+      }
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        video.srcObject = stream;
+        await video.play();
+        logln("Camera started.");
+      } catch (e) {
+        logln("Camera blocked/unavailable: " + e);
+        return;
+      }
+
+      if (!window.FaceMesh || !window.Camera) {
+        logln("MediaPipe FaceMesh JS not loaded; blink detection disabled (manual confirm still works).");
+        return;
+      }
+
+      const LEFT_EYE_OUTER = 33, LEFT_EYE_INNER = 133, LEFT_EYE_TOP = 159, LEFT_EYE_BOTTOM = 145;
+      const RIGHT_EYE_OUTER = 362, RIGHT_EYE_INNER = 263, RIGHT_EYE_TOP = 386, RIGHT_EYE_BOTTOM = 374;
+
+      const BLINK_EAR_THRESH = 0.20;
+      const BLINK_CONSEC_FRAMES = 3;
+      let blinkCounter = 0;
+
+      function dist(a, b) {
+        const dx = a.x - b.x;
+        const dy = a.y - b.y;
+        return Math.sqrt(dx*dx + dy*dy);
+      }
+      function ear(outer, inner, top, bottom) {
+        const hor = dist(outer, inner) + 1e-6;
+        const ver = dist(top, bottom);
+        return ver / hor;
+      }
+
+      const faceMesh = new window.FaceMesh({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+      });
+
+      faceMesh.setOptions({
+        maxNumFaces: 1,
+        refineLandmarks: true,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+      });
+
+      faceMesh.onResults((results) => {
+        const faces = results.multiFaceLandmarks;
+        if (!faces || faces.length === 0) return;
+
+        const lm = faces[0];
+        const lOuter = lm[LEFT_EYE_OUTER];
+        const lInner = lm[LEFT_EYE_INNER];
+        const lTop   = lm[LEFT_EYE_TOP];
+        const lBot   = lm[LEFT_EYE_BOTTOM];
+
+        const rOuter = lm[RIGHT_EYE_OUTER];
+        const rInner = lm[RIGHT_EYE_INNER];
+        const rTop   = lm[RIGHT_EYE_TOP];
+        const rBot   = lm[RIGHT_EYE_BOTTOM];
+
+        const e = (ear(lOuter,lInner,lTop,lBot) + ear(rOuter,rInner,rTop,rBot)) / 2.0;
+
+        if (e < BLINK_EAR_THRESH) {
+          blinkCounter += 1;
+        } else {
+          if (blinkCounter >= BLINK_CONSEC_FRAMES) {
+            if (confirmModeActive) triggerBlinkConfirm();
+          }
+          blinkCounter = 0;
+        }
+      });
+
+      const cam = new window.Camera(video, {
+        onFrame: async () => {
+          try { await faceMesh.send({image: video}); } catch {}
+        },
+        width: 640,
+        height: 480
+      });
+
+      cam.start();
+      logln("Blink detection enabled (MediaPipe FaceMesh).");
+    }
+
+    // -----------------------------
+    // Message handler
+    // -----------------------------
+    function handleMsg(msg) {
+      const t = msg.type || "";
+      switch (t) {
+        case "log":
+          logln(msg.text || "");
+          break;
+
+        case "init": {
+          classNames = (msg.class_names || []).slice();
+          $("infoLine").textContent = msg.info || "—";
+          fs = Number(msg.fs || fs);
+          const sec = Number(msg.live_sec || liveWindowSec);
+          const nSig = Number(msg.n_signal_ch || 0);
+          if (nSig > 0) rebuildLiveRing(nSig, fs, sec);
+
+          if (classNames.length > 0) initProbPlot(classNames);
+          logln(`INIT: fs=${fs}, live_sec=${sec}, n_signal_ch=${nSig}, classes=${classNames.length}`);
+          break;
+        }
+
+        case "gate_info": {
+          const useUv = !!msg.use_uv;
+          $("btnModeUv").classList.toggle("primary", useUv);
+          $("btnModeZ").classList.toggle("primary", !useUv);
+          $("uvThr").value = String(msg.threshold_uV ?? $("uvThr").value);
+          $("zThr").value = String(msg.zscore_thresh ?? $("zThr").value);
+          $("minActive").value = String(msg.min_active_channels ?? $("minActive").value);
+          $("consec").value = String(msg.consec_samp ?? $("consec").value);
+          $("cooldown").value = String(msg.cooldown_samp ?? $("cooldown").value);
+
+          const b = String(msg.board || "").toUpperCase();
+          $("btnBoardCyton").classList.toggle("primary", b === "CYTON");
+          $("btnBoardSynth").classList.toggle("primary", b === "SYNTHETIC");
+          break;
+        }
+
+        case "signal": {
+          if (!msg.chunk) break;
+          ringAppend(msg.chunk);
+          scheduleLiveRedraw();
+          break;
+        }
+
+        case "update": {
+          const ts = msg.timestamp || "--:--:--";
+          const top1 = msg.top1 || ["", 0];
+
+          // Dedicated Top Word section
+          const w = String(top1[0] || "—").toUpperCase();
+          const pct = Number(top1[1] || 0) * 100.0;
+          $("topWordText").textContent = w;
+          $("topWordPct").textContent = `Confidence: ${pct.toFixed(1)}%`;
+          $("topWordTs").textContent = `Time: ${ts}`;
+
+          // Status line: keep concise
+          $("statusLine").textContent = `${ts} | Inference received`;
+          $("infoLine").textContent = msg.info || "—";
+
+          const names = (msg.class_names || classNames).slice();
+          const probs = (msg.probs || []).slice();
+          if (names.length && probs.length) updateProb(names, probs);
+
+          if (msg.logline) logln(msg.logline);
+          break;
+        }
+
+        case "last_window": {
+          updateLastWindow(msg.chunk || [], msg.fs || fs, msg.trigger_idx || 0, msg.labels || null);
+          break;
+        }
+
+        case "convo_spec": {
+          setConvoSpec(msg.spec || null);
+          logln("Conversation spec received.");
+          break;
+        }
+
+        case "voice_capture_step": {
+          const token = msg.token || "";
+          const conf = (msg.conf !== undefined && msg.conf !== null) ? Number(msg.conf) : null;
+          if (conf === null) {
+            $("listenText").textContent = `Listening… (latest: ${token})`;
+          } else {
+            $("listenText").textContent = `Listening… (latest: ${String(token).toUpperCase()} ${(conf*100).toFixed(0)}%)`;
+          }
+          break;
+        }
+
+        case "voice_decision": {
+          const qid = msg.qid;
+          const decision = String(msg.decision || "").toLowerCase();
+          const conf = Number(msg.confidence || 0);
+
+          // Show as a user "text message"
+          const shown = decision ? decision.toUpperCase() : "—";
+          addMsg("user", shown, `conf ${(conf*100).toFixed(0)}%`);
+
+          answers[qid] = decision;
+
+          const q = qMap[qid] || {};
+          let nxt = followupFor(q, decision);
+          nxt = applyRedundancyRules(qid, decision, nxt);
+
+          startCaptureFor(nxt);
+          break;
+        }
+
+        case "confirm_prompt": {
+          const w = String(msg.word || "").toUpperCase();
+          const c = Number(msg.confidence || 0);
+          setBlinkBox(`Predicted: ${w} (${(c*100).toFixed(1)}%).\\nBlink within 2 seconds to confirm.`);
+          confirmModeActive = true;
+
+          // Optional: also drop a system message into chat
+          addMsg("system", `Blink to confirm: ${w} (${(c*100).toFixed(0)}%)`);
+          break;
+        }
+
+        case "confirm_prompt_clear": {
+          setBlinkBox("Blink confirm: idle");
+          confirmModeActive = false;
+          break;
+        }
+
+        default:
+          break;
+      }
+    }
+
+    // -----------------------------
+    // Wire UI → backend
+    // -----------------------------
+    let useUvGate = false; // updated by gate_info
+
+    $("btnBoardCyton").onclick = () => send({type: "switch_board", board: "CYTON"});
+    $("btnBoardSynth").onclick = () => send({type: "switch_board", board: "SYNTHETIC"});
+
+    $("btnModeUv").onclick = () => {
+      useUvGate = true;
+      $("btnModeUv").classList.add("primary");
+      $("btnModeZ").classList.remove("primary");
+    };
+    $("btnModeZ").onclick  = () => {
+      useUvGate = false;
+      $("btnModeZ").classList.add("primary");
+      $("btnModeUv").classList.remove("primary");
+    };
+
+    $("btnApplyGate").onclick = () => {
+      send({
+        type: "config_update",
+        use_uv_gate: useUvGate,
+        threshold_uV: Number($("uvThr").value),
+        zscore_thresh: Number($("zThr").value),
+        min_active_channels: Number($("minActive").value),
+        consec_samp: Number($("consec").value),
+        cooldown_samp: Number($("cooldown").value),
+      });
+      logln("[UI] Gate settings sent.");
+    };
+
+    $("btnRebuildLive").onclick = () => {
+      const sec = Number($("liveSec").value);
+      rebuildLiveRing(liveNch || 4, fs, sec);
+    };
+
+    $("btnPauseLive").onclick = () => {
+      livePaused = !livePaused;
+      $("btnPauseLive").textContent = livePaused ? "Resume plot" : "Pause plot";
+      logln(`[UI] Live plot ${livePaused ? "paused" : "resumed"}.`);
+    };
+
+    $("btnAutoscaleLive").onclick = () => {
+      try { Plotly.relayout("livePlot", {"yaxis.autorange": true}); } catch {}
+    };
+
+    $("btnAutoscaleLast").onclick = () => {
+      try { Plotly.relayout("lastPlot", {"yaxis.autorange": true}); } catch {}
+    };
+
+    $("btnManualConfirm").onclick = () => {
+      logln("[UI] Manual confirm clicked (sending blink_confirm).");
+      triggerBlinkConfirm();
+    };
+
+    $("btnQuit").onclick = () => send({type: "quit"});
+
+    // -----------------------------
+    // Boot
+    // -----------------------------
+    window.addEventListener("load", async () => {
+      setConn(false, "Disconnected");
+
+      // minimal empty plots so layout doesn't jump
+      setTimeout(() => {
+        try { initProbPlot(["—"]); } catch {}
+        try { rebuildLiveRing(4, fs, Number($("liveSec").value)); } catch {}
+        try {
+          Plotly.newPlot("lastPlot", [], {
+            margin: {l: 60, r: 18, t: 10, b: 40},
+            xaxis: {title: "Time (s)"},
+            yaxis: {title: "Amplitude (stacked)", autorange: true},
+            paper_bgcolor: "rgba(0,0,0,0)",
+            plot_bgcolor: "rgba(0,0,0,0)",
+            font: plotFont,
+          }, {displayModeBar: false, responsive: true});
+        } catch {}
+      }, 300);
+
+
+      connect();
+      initCameraAndBlink();
+      logln("UI loaded.");
+    });
+  </script>
+</body>
+</html>
